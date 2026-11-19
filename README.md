@@ -2,6 +2,8 @@
 
 Khung ứng dụng React + Vite và FastAPI. Hiện có thanh điều hướng, giao diện nền tối và API `/api/health` để kiểm tra kết nối. Các file database, model, schema và AI mới là vị trí chờ triển khai; chưa có chức năng đăng nhập, nhận diện món ăn, thực đơn hoặc tập luyện.
 
+Thư mục `data/` đã có hai danh mục CSV thực phẩm và món ăn. Xem [mô tả cấu trúc, đơn vị và nguồn dữ liệu](data/README.md). Backend chưa nạp các file này.
+
 ## Chạy local
 
 Yêu cầu Python 3.11+, Node.js 20+ và Git. Chạy các lệnh sau từ thư mục gốc repo:
@@ -41,7 +43,7 @@ frontend/
   src/api.js           hàm gọi API
   src/constants.js     nhãn bữa ăn và dinh dưỡng
   src/style.css        giao diện nền và responsive
-data/                  vị trí bổ sung danh mục CSV
+data/                  danh mục CSV và mô tả cấu trúc, đơn vị, nguồn
 ```
 
 ## Kiểm tra
