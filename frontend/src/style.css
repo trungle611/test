@@ -1,0 +1,130 @@
+:root {
+  font-family: Inter, system-ui, sans-serif;
+  color: #eef7f8;
+  background: #121212;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+  min-height: 44px;
+}
+button:focus-visible {
+  outline: 2px solid #56dce9;
+  outline-offset: 3px;
+}
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.topbar {
+  height: 72px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #343b3e;
+}
+.topbar strong {
+  font-size: 22px;
+  color: #56dce9;
+}
+.topbar span {
+  color: #a1b5ba;
+  font-size: 14px;
+}
+.body-layout {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: calc(100vh - 72px);
+}
+.sidebar {
+  border-right: 1px solid #343b3e;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sidebar button {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #a1b5ba;
+  padding: 12px;
+  text-align: left;
+}
+.sidebar button.active {
+  background: #1d383d;
+  border-color: #3b646b;
+  color: #56dce9;
+}
+main {
+  padding: 32px 24px;
+  max-width: 1192px;
+  width: 100%;
+}
+h1 {
+  font-size: 34px;
+  margin: 8px 0 12px;
+}
+h2 {
+  font-size: 22px;
+}
+p {
+  color: #a1b5ba;
+  line-height: 1.65;
+}
+.kicker {
+  color: #56dce9;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.panel {
+  border: 1px solid #384145;
+  background: #ffffff0f;
+  padding: 24px;
+  border-radius: 14px;
+  margin-top: 24px;
+}
+.primary-button {
+  background: #56dce9;
+  color: #10272b;
+  border: 0;
+  border-radius: 8px;
+  padding: 12px 18px;
+  font-weight: 700;
+}
+@media (max-width: 800px) {
+  .body-layout {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+  .sidebar {
+    padding: 16px;
+  }
+}
+@media (max-width: 580px) {
+  .body-layout {
+    display: block;
+  }
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #343b3e;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  main {
+    padding: 24px 16px;
+  }
+  .topbar span {
+    font-size: 12px;
+  }
+}
