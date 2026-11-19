@@ -59,4 +59,4 @@ Hai CSV được giữ nguyên từ [BTL-AI tại commit 46f262f](https://github
 
 Đã kiểm tra cấu trúc cột, trường bắt buộc, ID trùng trên cả hai file, giá trị dinh dưỡng hữu hạn/không âm, đơn vị và định lượng khẩu phần. Kiểm tra này xác nhận định dạng phù hợp để tích hợp, không xác nhận độ chính xác dinh dưỡng ngoài thực tế.
 
-Đợt này chỉ bổ sung dữ liệu. Backend hiện vẫn là khung và chưa nạp CSV vào database. Không lưu database hoặc ảnh người dùng trong thư mục này.
+Backend dùng `backend/app/catalog.py` để nạp hoặc cập nhật CSV theo ID khi khởi động. Không lưu database hoặc ảnh người dùng trong thư mục này.
