@@ -61,7 +61,7 @@ def bounded_request(fn):
 
 
 def client(key=None):
-    key = key or os.getenv("GEMINI_API_KEY")
+    key = (key if key is not None else os.getenv("GEMINI_API_KEY", "")).strip()
     return (
         genai.Client(api_key=key, http_options=types.HttpOptions(timeout=ATTEMPT_TIMEOUT_MS))
         if key
@@ -76,12 +76,17 @@ def require_client():
     return ai
 
 
+def _reject_json_constant(_value):
+    raise ValueError("JSON chứa số không hữu hạn")
+
+
 def generate_json(ai, contents, schema):
     """Tối đa ba lượt gọi; timeout/mạng cũng được chuyển sang project dự phòng."""
     deadline = _request_deadline.get() or time.monotonic() + REQUEST_BUDGET_SECONDS
     active_client = ai
     fallback_key = os.getenv("GEMINI_FALLBACK_API_KEY", "").strip()
-    has_fallback = bool(fallback_key and fallback_key != os.getenv("GEMINI_API_KEY"))
+    primary_key = os.getenv("GEMINI_API_KEY", "").strip()
+    has_fallback = bool(fallback_key and fallback_key != primary_key)
     reason = "timeout"
     for attempt in range(MAX_ATTEMPTS):
         remaining_ms = int((deadline - time.monotonic()) * 1000)
@@ -115,9 +120,14 @@ def generate_json(ai, contents, schema):
                 raise AIServiceError(reason) from None
         else:
             try:
-                return json.loads(response.text)
-            except (ValueError, TypeError) as exc:
-                raise AIResponseError("AI trả kết quả không hợp lệ. Hãy thử nhận diện lại") from exc
+                result = json.loads(response.text, parse_constant=_reject_json_constant)
+                if not isinstance(result, dict):
+                    raise ValueError("Kết quả AI phải là một JSON object")
+                return result
+            except (ValueError, TypeError):
+                raise AIResponseError(
+                    "AI trả kết quả không hợp lệ. Hãy thử nhận diện lại"
+                ) from None
 
         if attempt == MAX_ATTEMPTS - 1:
             break

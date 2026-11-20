@@ -84,6 +84,33 @@ def test_scan_reports_classified_failure_without_saving_food(monkeypatch):
         assert latest.status == "timeout"
 
 
+def test_scan_hides_provider_details_and_preserves_meals(monkeypatch, caplog):
+    from app import ai
+
+    secret = "private-provider-key-marker"
+    failures = [
+        RuntimeError(f"request failed: key={secret}"),
+        ai.errors.ClientError(400, {"error": {"message": f"Invalid request key={secret}"}}),
+    ]
+    image = BytesIO()
+    Image.new("RGB", (32, 32), "white").save(image, format="PNG")
+    with TestClient(app) as client:
+        before = client.get("/api/dashboard").json()
+        for failure in failures:
+
+            def unavailable(*args, error=failure):
+                raise error
+
+            monkeypatch.setattr(ai, "scan_image", unavailable)
+            response = client.post(
+                "/api/scan", files={"file": ("food.png", image.getvalue(), "image/png")}
+            )
+            assert response.status_code == 503
+            assert secret not in response.text
+            assert secret not in caplog.text
+            assert client.get("/api/dashboard").json() == before
+
+
 def test_slow_scan_does_not_block_health_endpoint(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event

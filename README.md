@@ -41,6 +41,16 @@ SQLite tạo `backend/hbtnfit.db` khi chạy bằng lệnh trên. Ảnh lịch s
 
 Gợi ý và số liệu dinh dưỡng cần được người dùng kiểm tra. Các kiểm thử gọi AI bằng giả lập xác nhận luồng xử lý, không đánh giá độ chính xác của Gemini trên ảnh thật.
 
+## Lỗi Gemini và cấu hình khóa
+
+- Khóa chỉ được đọc ở backend từ `.env`; `.env.example` không chứa giá trị thật. Frontend không nhận khóa qua API.
+- Mỗi yêu cầu nhận diện dùng chung ngân sách tối đa 45 giây cho các lượt gọi AI, kể cả bước sửa tiếng Việt. Mỗi lượt gọi có timeout tối đa 20 giây và tối đa 3 lần thử trong một lần sinh JSON.
+- Timeout, mất kết nối, giới hạn lượt dùng, quá tải và lỗi xác thực được phân loại thành thông báo tiếng Việt. Khóa dự phòng khác khóa chính được thử sau lỗi đầu tiên phù hợp; lỗi yêu cầu không hợp lệ không được che bằng chuyển khóa.
+- Kết quả phải là JSON object và không chứa NaN/Infinity. Kết quả sai được báo lỗi nhận diện để người dùng thử lại hoặc nhập tay.
+- API scan không chuyển nguyên văn lỗi nhà cung cấp ra giao diện hoặc log ứng dụng. Nhận diện thất bại không tự thêm món hay làm thay đổi tổng thực đơn.
+
+Các kiểm thử dùng khóa giả và dịch vụ giả lập. Khả năng gọi API thật còn phụ thuộc cấu hình, quyền truy cập và tình trạng dịch vụ.
+
 ## Cấu trúc
 
 ```text
