@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import time
@@ -10,6 +11,8 @@ import httpx
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
+
+from .scan_service import validate_scan_result
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -61,7 +64,7 @@ def bounded_request(fn):
 
 
 def client(key=None):
-    key = key or os.getenv("GEMINI_API_KEY")
+    key = (key if key is not None else os.getenv("GEMINI_API_KEY", "")).strip()
     return (
         genai.Client(api_key=key, http_options=types.HttpOptions(timeout=ATTEMPT_TIMEOUT_MS))
         if key
@@ -76,12 +79,24 @@ def require_client():
     return ai
 
 
+def _reject_json_constant(_value):
+    raise ValueError("JSON chứa số không hữu hạn")
+
+
+def _finite_json_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("JSON chứa số vượt giới hạn")
+    return number
+
+
 def generate_json(ai, contents, schema):
     """Tối đa ba lượt gọi; timeout/mạng cũng được chuyển sang project dự phòng."""
     deadline = _request_deadline.get() or time.monotonic() + REQUEST_BUDGET_SECONDS
     active_client = ai
     fallback_key = os.getenv("GEMINI_FALLBACK_API_KEY", "").strip()
-    has_fallback = bool(fallback_key and fallback_key != os.getenv("GEMINI_API_KEY"))
+    primary_key = os.getenv("GEMINI_API_KEY", "").strip()
+    has_fallback = bool(fallback_key and fallback_key != primary_key)
     reason = "timeout"
     for attempt in range(MAX_ATTEMPTS):
         remaining_ms = int((deadline - time.monotonic()) * 1000)
@@ -115,9 +130,18 @@ def generate_json(ai, contents, schema):
                 raise AIServiceError(reason) from None
         else:
             try:
-                return json.loads(response.text)
-            except (ValueError, TypeError) as exc:
-                raise AIResponseError("AI trả kết quả không hợp lệ. Hãy thử nhận diện lại") from exc
+                result = json.loads(
+                    response.text,
+                    parse_constant=_reject_json_constant,
+                    parse_float=_finite_json_float,
+                )
+                if not isinstance(result, dict):
+                    raise ValueError("Kết quả AI phải là một JSON object")
+                return result
+            except (ValueError, TypeError):
+                raise AIResponseError(
+                    "AI trả kết quả không hợp lệ. Hãy thử nhận diện lại"
+                ) from None
 
         if attempt == MAX_ATTEMPTS - 1:
             break
@@ -207,6 +231,48 @@ VIETNAMESE_ASCII_MARKERS = {
     "voi",
 }
 
+FOOD_ASCII_MARKERS = {
+    "banh",
+    "bo",
+    "bun",
+    "ca",
+    "canh",
+    "cha",
+    "chien",
+    "com",
+    "cuon",
+    "ga",
+    "heo",
+    "hu",
+    "kho",
+    "mien",
+    "nuong",
+    "pho",
+    "sot",
+    "sua",
+    "tam",
+    "thit",
+    "tieu",
+    "tom",
+    "trung",
+    "xao",
+    "rau",
+    "muong",
+    "luoc",
+    "cai",
+    "khoai",
+    "lang",
+    "dau",
+    "phu",
+    "xoi",
+    "gio",
+    "lon",
+    "vit",
+    "hap",
+    "ham",
+    "sup",
+}
+
 
 def scan_contains_english(value):
     """Phát hiện các từ tiếng Anh thường bị Gemini để sót trong kết quả quét."""
@@ -229,8 +295,33 @@ def contains_unaccented_vietnamese(value):
     if not isinstance(value, str):
         return False
     words = re.findall(r"[a-z]+", value.casefold())
+    if value.isascii() and 2 <= len(words) <= 8:
+        food_words = sum(word in FOOD_ASCII_MARKERS for word in words)
+        if food_words >= 2 and food_words >= len(words) * 0.5:
+            return True
     marker_count = sum(word in VIETNAMESE_ASCII_MARKERS for word in words)
     return marker_count >= 3 and marker_count >= len(words) * 0.25
+
+
+def _preserves_data(before, after, field=None):
+    if isinstance(before, dict):
+        return (
+            isinstance(after, dict)
+            and before.keys() == after.keys()
+            and all(_preserves_data(value, after[key], key) for key, value in before.items())
+        )
+    if isinstance(before, list):
+        return (
+            isinstance(after, list)
+            and len(before) == len(after)
+            and all(_preserves_data(a, b, field) for a, b in zip(before, after))
+        )
+    if isinstance(before, str):
+        protected = {"id", "food_id", "meal_type", "meal_slot", "unit", "basis_unit"}
+        return isinstance(after, str) and (field not in protected or before == after)
+    if isinstance(before, bool) or before is None:
+        return type(before) is type(after) and before == after
+    return isinstance(after, (int, float)) and not isinstance(after, bool) and before == after
 
 
 def rewrite_vietnamese(ai, result, schema):
@@ -240,7 +331,19 @@ def rewrite_vietnamese(ai, result, schema):
         "Không thay đổi cấu trúc JSON, số liệu, ý nghĩa, thứ tự hoặc số phần tử trong các mảng. JSON: "
         f"{json.dumps(result, ensure_ascii=False)}"
     )
-    return generate_json(ai, prompt, schema)
+    rewritten = generate_json(ai, prompt, schema)
+    if not _preserves_data(result, rewritten):
+        raise AIResponseError(
+            "AI thay đổi cấu trúc, mã món hoặc số liệu khi sửa tiếng Việt. Hãy thử lại hoặc nhập tay"
+        )
+    return rewritten
+
+
+def _checked_scan_result(result):
+    try:
+        return validate_scan_result(result)
+    except ValueError:
+        raise AIResponseError("AI trả kết quả món ăn sai cấu trúc. Hãy thử nhận diện lại") from None
 
 
 @bounded_request
@@ -309,11 +412,13 @@ def scan_image(image_bytes: bytes, mime_type: str, catalog=None, avoid_tags=None
         },
         "required": ["dishes", "warning"],
     }
-    result = generate_json(
-        ai, [types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt], schema
+    result = _checked_scan_result(
+        generate_json(
+            ai, [types.Part.from_bytes(data=image_bytes, mime_type=mime_type), prompt], schema
+        )
     )
     if scan_contains_english(result) or contains_unaccented_vietnamese(result):
-        result = rewrite_vietnamese(ai, result, schema)
+        result = _checked_scan_result(rewrite_vietnamese(ai, result, schema))
     if scan_contains_english(result) or contains_unaccented_vietnamese(result):
         raise AIResponseError(
             "Gemini chưa trả kết quả hoàn toàn bằng tiếng Việt. Hãy thử nhận diện lại"
