@@ -111,6 +111,29 @@ def test_scan_hides_provider_details_and_preserves_meals(monkeypatch, caplog):
             assert client.get("/api/dashboard").json() == before
 
 
+def test_malformed_ai_dishes_return_503_without_changing_meals(monkeypatch):
+    from types import SimpleNamespace
+
+    from app import ai
+
+    fake = SimpleNamespace(
+        models=SimpleNamespace(
+            generate_content=lambda **kwargs: SimpleNamespace(text='{"dishes":"not-a-list"}')
+        )
+    )
+    monkeypatch.setattr(ai, "client", lambda *_: fake)
+    image = BytesIO()
+    Image.new("RGB", (32, 32), "white").save(image, format="PNG")
+    with TestClient(app) as client:
+        before = client.get("/api/dashboard").json()
+        response = client.post(
+            "/api/scan", files={"file": ("food.png", image.getvalue(), "image/png")}
+        )
+        assert response.status_code == 503
+        assert "sai cấu trúc" in response.json()["detail"]
+        assert client.get("/api/dashboard").json() == before
+
+
 def test_slow_scan_does_not_block_health_endpoint(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event

@@ -144,7 +144,13 @@ def test_non_object_json_is_rejected_without_provider_details(payload):
 
 @pytest.mark.parametrize(
     "text",
-    ['{"value": NaN}', '{"value": Infinity}', '{"value": -Infinity}', "secret-provider-data"],
+    [
+        '{"value": NaN}',
+        '{"value": Infinity}',
+        '{"value": -Infinity}',
+        '{"value": 1e309}',
+        "secret-provider-data",
+    ],
 )
 def test_invalid_json_is_rejected_without_raw_content(text):
     fake = SimpleNamespace(

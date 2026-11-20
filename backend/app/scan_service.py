@@ -18,6 +18,40 @@ SCAN_UPLOAD_DIR = Path(
 )
 
 
+def validate_scan_result(result):
+    """Kiểm tra cấu trúc trước khi ghép dữ liệu AI với danh mục thực phẩm."""
+    if not isinstance(result, dict) or not isinstance(result.get("dishes"), list):
+        raise ValueError("Kết quả nhận diện thiếu danh sách món")
+    if not isinstance(result.get("warning", ""), str) or len(result["dishes"]) > 5:
+        raise ValueError("Cảnh báo hoặc số lượng món không hợp lệ")
+    for item in result["dishes"]:
+        if not isinstance(item, dict):
+            raise ValueError("Mỗi món phải là một object")
+        labels = item.get("candidate_labels")
+        ingredients = item.get("visible_ingredients", [])
+        if (
+            not isinstance(labels, list)
+            or len(labels) > 3
+            or not all(isinstance(label, str) for label in labels)
+            or not isinstance(ingredients, list)
+            or not all(isinstance(value, str) for value in ingredients)
+            or not isinstance(item.get("uncertainty_reason", ""), str)
+        ):
+            raise ValueError("Tên món hoặc nguyên liệu không đúng cấu trúc")
+        if "confidence" in item:
+            value = item["confidence"]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not 0 <= value <= 1
+            ):
+                raise ValueError("Độ tin cậy phải nằm trong khoảng 0 đến 1")
+        for field in ("estimated_nutrition_1g", "estimated_nutrition_100g"):
+            if item.get(field) is not None and not isinstance(item[field], dict):
+                raise ValueError("Dinh dưỡng ước tính phải là một object")
+    return result
+
+
 def validate_image(raw: bytes, content_type: str | None):
     if len(raw) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "Ảnh vượt quá 5 MB")
@@ -38,8 +72,13 @@ def _nutrition_estimate(item):
         return None
     factor = 100 if per_gram is not None else 1
     try:
+        if any(
+            isinstance(raw[key], bool) or not isinstance(raw[key], (int, float))
+            for key in ("kcal", "protein", "carb", "fat")
+        ):
+            return None
         values = {key: float(raw[key]) * factor for key in ("kcal", "protein", "carb", "fat")}
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         return None
     valid = (
         all(math.isfinite(value) for value in values.values())
@@ -54,8 +93,9 @@ def build_dishes(result, foods, serialize_food, avoid_tags=None):
     for item in result.get("dishes", [])[:5]:
         labels = [label for label in item.get("candidate_labels", [])[:3] if isinstance(label, str)]
         try:
-            confidence = max(0.0, min(1.0, float(item.get("confidence", 1.0))))
-        except (TypeError, ValueError):
+            value = float(item.get("confidence", 1.0))
+            confidence = max(0.0, min(1.0, value)) if math.isfinite(value) else 0.0
+        except (TypeError, ValueError, OverflowError):
             confidence = 0.0
         # Chỉ nhãn có khả năng cao nhất được dùng để tạo nút chọn tự động.
         # Các nhãn phụ vẫn hiển thị để người dùng tham khảo nhưng không kéo theo món CSV khác.
