@@ -1,21 +1,11 @@
 const API_BASE = import.meta.env.VITE_API_URL || '';
 const TOKEN_KEY = 'hbtnfit_auth_token';
-const VISITOR_KEY = 'hbtnfit_visitor_id';
 
 const validationTranslations = {
   'Field required': 'thiếu dữ liệu bắt buộc',
   'Input should be greater than 0': 'giá trị phải lớn hơn 0',
   'String should have at least 2 characters': 'tên món phải có ít nhất 2 ký tự',
 };
-
-function visitorId() {
-  let value = localStorage.getItem(VISITOR_KEY);
-  if (!value) {
-    value = crypto.randomUUID();
-    localStorage.setItem(VISITOR_KEY, value);
-  }
-  return value;
-}
 
 function errorMessage(body, status) {
   if (typeof body.detail === 'string') return body.detail;
@@ -39,13 +29,25 @@ export async function apiCall(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const token = localStorage.getItem(TOKEN_KEY);
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  else headers.set('X-Visitor-Id', visitorId());
 
   const response = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers });
   if (responseType === 'blob' && response.ok) return response.blob();
 
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(errorMessage(body, response.status));
+  if (!response.ok) {
+    const error = new Error(errorMessage(body, response.status));
+    error.status = response.status;
+    if (
+      response.status === 401 &&
+      token &&
+      getAuthToken() === token &&
+      !path.startsWith('/api/auth/')
+    ) {
+      clearAuthToken();
+      window.dispatchEvent(new Event('hbtnfit-session-expired'));
+    }
+    throw error;
+  }
   return body;
 }
 

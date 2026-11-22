@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { CalendarDays, Dumbbell, House, Menu, UserRound, UtensilsCrossed } from 'lucide-react';
 import FoodHistory from './FoodHistory.jsx';
+import AuthPage from './AuthPage.jsx';
 import ScanHistory from './ScanHistory.jsx';
 import ScanSection from './ScanSection.jsx';
 import TodayMeals from './TodayMeals.jsx';
-import { apiCall } from './api.js';
+import WorkoutPlans from './WorkoutPlans.jsx';
+import WorkoutPanel from './WorkoutPanel.jsx';
+import { apiCall, getAuthToken, saveAuthToken, clearAuthToken } from './api.js';
 
 const navigation = [
   { id: 'home', label: 'Trang chủ', icon: House },
   { id: 'food', label: 'Ăn uống', icon: UtensilsCrossed },
-  { id: 'workout', label: 'Tập luyện', icon: Dumbbell, pending: true },
+  { id: 'workout', label: 'Tập luyện', icon: Dumbbell },
   { id: 'profile', label: 'Cá nhân', icon: UserRound, pending: true },
 ];
 
@@ -22,6 +25,56 @@ function currentMealType() {
 }
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    if (!getAuthToken()) {
+      setChecking(false);
+      return;
+    }
+    apiCall('/api/auth/me')
+      .then((value) => {
+        if (active) setUser(value);
+      })
+      .catch((error) => {
+        if (active && error.status === 401) clearAuthToken();
+      })
+      .finally(() => {
+        if (active) setChecking(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const expired = () => setUser(null);
+    window.addEventListener('hbtnfit-session-expired', expired);
+    return () => window.removeEventListener('hbtnfit-session-expired', expired);
+  }, []);
+
+  function authenticated(result) {
+    saveAuthToken(result.access_token);
+    setUser(result.user);
+  }
+  function logout() {
+    clearAuthToken();
+    setUser(null);
+  }
+  if (checking)
+    return (
+      <main className="auth-checking" role="status">
+        Đang kiểm tra phiên đăng nhập…
+      </main>
+    );
+  if (!user) return <AuthPage onAuthenticated={authenticated} />;
+  // Đổi tài khoản sẽ hủy toàn bộ state và ảnh của tài khoản trước.
+  return <SignedInApp key={user.id} user={user} logout={logout} />;
+}
+
+function SignedInApp({ user, logout }) {
   const [section, setSection] = useState('food');
   const [navOpen, setNavOpen] = useState(false);
   const [foods, setFoods] = useState([]);
@@ -31,16 +84,22 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [historyVersion, setHistoryVersion] = useState(0);
   const [selectedMeal, setSelectedMeal] = useState(currentMealType);
+  const [plans, setPlans] = useState([]);
+  const [workouts, setWorkouts] = useState(null);
 
   async function refresh() {
-    const [catalog, day, currentProfile] = await Promise.all([
+    const [catalog, day, currentProfile, planCatalog, workoutDay] = await Promise.all([
       apiCall('/api/foods'),
       apiCall('/api/dashboard'),
       apiCall('/api/profile'),
+      apiCall('/api/workouts/plans'),
+      apiCall('/api/workouts/today'),
     ]);
     setFoods(catalog);
     setDashboard(day);
     setProfile(currentProfile);
+    setPlans(planCatalog);
+    setWorkouts(workoutDay);
     setLoaded(true);
   }
 
@@ -92,6 +151,12 @@ export default function App() {
             </span>
           </button>
           <span className="topbar-caption">Dinh dưỡng & Tập luyện</span>
+          <div className="account-actions">
+            <span>{user.username}</span>
+            <button className="link-button" onClick={logout}>
+              Đăng xuất
+            </button>
+          </div>
         </div>
       </header>
       <div className="body-layout">
@@ -124,8 +189,18 @@ export default function App() {
               <div className="date-line">
                 <CalendarDays size={15} /> {dateLabel}
               </div>
-              <h1>{section === 'home' ? 'Tổng quan hôm nay' : 'Ăn uống'}</h1>
-              <p>Nhận diện món ăn, xác nhận khẩu phần và theo dõi thực đơn.</p>
+              <h1>
+                {section === 'home'
+                  ? 'Tổng quan hôm nay'
+                  : section === 'workout'
+                    ? 'Tập luyện'
+                    : 'Ăn uống'}
+              </h1>
+              <p>
+                {section === 'workout'
+                  ? 'Chọn giáo án, tiếp tục buổi đang tập và theo dõi lịch đi tập/nghỉ.'
+                  : 'Nhận diện món ăn, xác nhận khẩu phần và theo dõi thực đơn.'}
+              </p>
             </div>
           </div>
           {notice && (
@@ -141,6 +216,24 @@ export default function App() {
           )}
           {!loaded ? (
             <p role="status">Đang tải thực đơn và danh mục món ăn…</p>
+          ) : section === 'workout' ? (
+            <div className="training-page">
+              <WorkoutPlans
+                plans={plans}
+                selectedId={workouts?.selected_plan?.id}
+                call={apiCall}
+                refresh={refresh}
+                onError={setNotice}
+              />
+              {workouts?.selected_plan && (
+                <WorkoutPanel
+                  workouts={workouts}
+                  call={apiCall}
+                  refresh={refresh}
+                  onError={setNotice}
+                />
+              )}
+            </div>
           ) : (
             <>
               <div className="dashboard-grid">

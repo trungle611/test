@@ -2943,3 +2943,27 @@ select:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.account-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.account-actions > span {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 680px) {
+  .account-actions {
+    gap: 8px;
+    font-size: 12px;
+  }
+  .account-actions > span {
+    max-width: 85px;
+  }
+  .topbar-caption {
+    display: none;
+  }
+}
