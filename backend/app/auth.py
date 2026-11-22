@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import time
+from pathlib import Path
 
 PASSWORD_ITERATIONS = 240_000
 TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -19,10 +20,26 @@ def _decode(value: str) -> bytes:
 
 
 def _secret() -> bytes:
-    value = os.getenv("AUTH_SECRET")
-    if not value and os.getenv("VERCEL"):
+    value = os.getenv("AUTH_SECRET", "").strip()
+    if value:
+        if len(value) < 32:
+            raise RuntimeError("AUTH_SECRET cần ít nhất 32 ký tự")
+        return value.encode()
+    if os.getenv("VERCEL"):
         raise RuntimeError("Thiếu AUTH_SECRET cho môi trường production")
-    return (value or "hbtnfit-local-development-secret").encode()
+    # Khóa local ngẫu nhiên và bền qua lần khởi động; không dùng khóa mặc định công khai.
+    path = Path(__file__).resolve().parents[1] / ".runtime" / "auth-secret"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as stream:
+            stream.write(secrets.token_urlsafe(48))
+        path.chmod(0o600)
+    except FileExistsError:
+        pass
+    value = path.read_text(encoding="utf-8").strip()
+    if len(value) < 32:
+        raise RuntimeError("Khóa phiên local không hợp lệ; hãy cấu hình AUTH_SECRET")
+    return value.encode()
 
 
 def hash_password(password: str) -> str:
@@ -59,7 +76,7 @@ def verify_token(token: str) -> str:
         if not hmac.compare_digest(signature, expected):
             raise ValueError("invalid signature")
         data = json.loads(_decode(payload))
-        if int(data["exp"]) < int(time.time()):
+        if int(data["exp"]) <= int(time.time()):
             raise ValueError("expired token")
         return str(data["sub"])
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:

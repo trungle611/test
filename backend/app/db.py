@@ -4,7 +4,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import HTTPException, Request
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -31,6 +31,14 @@ engine = create_engine(
     ),
 )
 SessionLocal = sessionmaker(bind=engine)
+
+
+if DATABASE_URL.startswith("sqlite"):
+
+    @event.listens_for(engine, "connect")
+    def configure_sqlite(connection, _):
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=10000")
 
 
 def migrate_demo_columns():
@@ -73,19 +81,14 @@ def migrate_demo_columns():
             "catalog_kind": "VARCHAR(20) DEFAULT 'food'",
         },
         "profiles": {
-            "visitor_id": "VARCHAR(40)",
             "sex": "VARCHAR(10)",
             "activity_level": "VARCHAR(20)",
             "protein_mode": "VARCHAR(20)",
         },
         "profile_guidance": {
-            "visitor_id": "VARCHAR(40)",
             "target_date": "VARCHAR(10)",
             "food_checklist": "JSON",
         },
-        "food_logs": {"visitor_id": "VARCHAR(40)"},
-        "meal_plans": {"visitor_id": "VARCHAR(40)"},
-        "workout_selection": {"visitor_id": "VARCHAR(40)"},
     }
     inspector = inspect(engine)
     with engine.begin() as connection:
@@ -99,27 +102,40 @@ def migrate_demo_columns():
 
 
 def get_db(request: Request):
-    authorization = request.headers.get("Authorization", "")
-    if authorization.startswith("Bearer "):
-        from .auth import verify_token
+    """Quyền sở hữu chỉ lấy từ token đã xác minh và tài khoản còn tồn tại."""
+    from .auth import verify_token
+    from .models import User
 
-        try:
-            visitor = str(uuid.UUID(verify_token(authorization[7:].strip())))
-        except ValueError as exc:
-            raise HTTPException(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn") from exc
-    else:
-        if os.getenv("REQUIRE_AUTH") == "1" and request.url.path not in {
-            "/api/auth/register",
-            "/api/auth/login",
-        }:
-            raise HTTPException(401, "Bạn cần đăng nhập để sử dụng tính năng này")
-        raw = request.headers.get("X-Visitor-Id")
-        if not raw and os.getenv("REQUIRE_VISITOR_ID") == "1":
-            raise HTTPException(400, "Thiếu mã phiên dùng thử")
-        try:
-            visitor = str(uuid.UUID(raw)) if raw else "demo-local"
-        except ValueError as exc:
-            raise HTTPException(400, "Mã phiên dùng thử không hợp lệ") from exc
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.casefold() != "bearer" or not token.strip():
+        raise HTTPException(401, "Bạn cần đăng nhập để sử dụng tính năng này")
+    try:
+        user_id = str(uuid.UUID(verify_token(token.strip())))
+    except ValueError as exc:
+        raise HTTPException(401, "Phiên đăng nhập không hợp lệ hoặc đã hết hạn") from exc
     with SessionLocal() as session:
-        session.info["visitor_id"] = visitor
+        user = session.get(User, user_id)
+        if not user:
+            raise HTTPException(401, "Tài khoản không tồn tại")
+        session.info["user_id"] = user_id
         yield session
+
+
+def public_db():
+    """Chỉ dùng cho đăng ký và đăng nhập; không được dùng ở API dữ liệu cá nhân."""
+    with SessionLocal() as session:
+        yield session
+
+
+def initialize_database():
+    """Tạo DB mới hoặc nâng cấp schema hiện có, không xóa bảng hay nhận dữ liệu demo."""
+    from .auth import _secret
+    from .catalog import load_catalog
+    from .migrations import migrate_user_ownership
+
+    _secret()
+    Base.metadata.create_all(engine)
+    migrate_demo_columns()
+    migrate_user_ownership(engine)
+    load_catalog()

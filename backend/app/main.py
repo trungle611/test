@@ -16,13 +16,13 @@ from sqlalchemy.orm import Session, selectinload
 from starlette.concurrency import run_in_threadpool
 
 from . import ai
-from .catalog import load_catalog
+from .auth_routes import router as auth_router
 from .core import (
     normalize,
     nutrition,
     validate_quantity,
 )
-from .db import Base, engine, get_db, migrate_demo_columns
+from .db import get_db, initialize_database
 from .goals import assess_daily_intake, daily_targets
 from .guidance_service import build_food_checklist
 from .models import (
@@ -79,13 +79,12 @@ def utc_timestamp(value):
 
 @asynccontextmanager
 async def lifespan(app):
-    Base.metadata.create_all(engine)
-    migrate_demo_columns()
-    load_catalog()
+    initialize_database()
     yield
 
 
 app = FastAPI(title="HBTNFIT API", version="0.1.0", lifespan=lifespan)
+app.include_router(auth_router)
 
 
 LOCAL_ORIGINS = [
@@ -109,31 +108,31 @@ app.add_middleware(
 )
 
 
-def visitor(db):
-    return db.info["visitor_id"]
+def current_user_id(db):
+    return db.info["user_id"]
 
 
 def scoped_key(db, value):
-    return hashlib.sha1(f"{visitor(db)}:{value}".encode()).hexdigest()
+    return hashlib.sha1(f"{current_user_id(db)}:{value}".encode()).hexdigest()
 
 
 def visible_food(food, db):
-    return food is not None and (food.owner_id is None or food.owner_id == visitor(db))
+    return food is not None and (food.owner_id is None or food.owner_id == current_user_id(db))
 
 
 def accessible_foods(db, include_aliases=False):
-    query = select(Food).where((Food.owner_id.is_(None)) | (Food.owner_id == visitor(db)))
+    query = select(Food).where((Food.owner_id.is_(None)) | (Food.owner_id == current_user_id(db)))
     if include_aliases:
         query = query.options(selectinload(Food.aliases))
     return db.scalars(query).all()
 
 
 def profile_record(db):
-    return db.scalar(select(Profile).where(Profile.visitor_id == visitor(db)))
+    return db.scalar(select(Profile).where(Profile.user_id == current_user_id(db)))
 
 
 def guidance_record(db):
-    return db.scalar(select(ProfileGuidance).where(ProfileGuidance.visitor_id == visitor(db)))
+    return db.scalar(select(ProfileGuidance).where(ProfileGuidance.user_id == current_user_id(db)))
 
 
 def save_today_nutrition_goal(db, profile=None, guidance=None):
@@ -148,7 +147,7 @@ def save_today_nutrition_goal(db, profile=None, guidance=None):
         if snapshot:
             snapshot.targets = values
         else:
-            db.add(DailyNutritionGoal(id=key, visitor_id=visitor(db), day=day, targets=values))
+            db.add(DailyNutritionGoal(id=key, user_id=current_user_id(db), day=day, targets=values))
     elif snapshot:
         db.delete(snapshot)
 
@@ -297,8 +296,8 @@ def save_profile(payload: ProfileIn, db: Session = Depends(get_db)):
                 422,
                 f"Cân nặng mong muốn phù hợp với mục tiêu {labels[expected_goal]}. Hãy chọn lại mục tiêu",
             )
-    profile = profile_record(db) or Profile(visitor_id=visitor(db))
-    guidance = guidance_record(db) or ProfileGuidance(visitor_id=visitor(db))
+    profile = profile_record(db) or Profile(user_id=current_user_id(db))
+    guidance = guidance_record(db) or ProfileGuidance(user_id=current_user_id(db))
     if (
         profile.weight_kg != payload.weight_kg
         or guidance.target_weight_kg != payload.target_weight_kg
@@ -355,7 +354,7 @@ def toggle_food_checklist(item_id: str, payload: ChecklistToggleIn, db: Session 
             if payload.completed and not item.get("completed"):
                 log = FoodLog(
                     food_id=food.id,
-                    visitor_id=visitor(db),
+                    user_id=current_user_id(db),
                     grams=amount,
                     meal_type=item["meal_type"],
                     eaten_at=datetime.now(timezone.utc),
@@ -365,7 +364,7 @@ def toggle_food_checklist(item_id: str, payload: ChecklistToggleIn, db: Session 
                 item.update({"completed": True, "amount": amount, "log_id": log.id})
             elif not payload.completed and item.get("completed"):
                 log = db.get(FoodLog, item.get("log_id")) if item.get("log_id") else None
-                if log and log.visitor_id == visitor(db):
+                if log and log.user_id == current_user_id(db):
                     db.delete(log)
                 item.update({"completed": False, "amount": amount, "log_id": None})
             found = True
@@ -446,6 +445,7 @@ async def scan(
     finally:
         db.add(
             AiRun(
+                user_id=current_user_id(db),
                 purpose="scan",
                 prompt_version=ai.SCAN_PROMPT_VERSION,
                 model_id=os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
@@ -463,7 +463,7 @@ async def scan(
         )
         else "unknown"
     )
-    image_key = save_thumbnail(raw, request_id, visitor(db))
+    image_key = save_thumbnail(raw, request_id, current_user_id(db))
     history_dishes = [
         {
             "labels": dish["suggested_labels"],
@@ -477,7 +477,7 @@ async def scan(
     db.add(
         ScanHistory(
             id=request_id,
-            visitor_id=visitor(db),
+            user_id=current_user_id(db),
             image_key=image_key,
             meal_type=meal_type,
             status=recognition_status,
@@ -500,7 +500,7 @@ def get_scan_history(
 ):
     records = db.scalars(
         select(ScanHistory)
-        .where(ScanHistory.visitor_id == visitor(db), ScanHistory.confirmed_at.is_not(None))
+        .where(ScanHistory.user_id == current_user_id(db), ScanHistory.confirmed_at.is_not(None))
         .order_by(ScanHistory.created_at.desc())
         .offset(offset)
         .limit(limit + 1)
@@ -516,7 +516,7 @@ def get_scan_history_image(history_id: str, db: Session = Depends(get_db)):
     record = db.scalar(
         select(ScanHistory).where(
             ScanHistory.id == history_id,
-            ScanHistory.visitor_id == visitor(db),
+            ScanHistory.user_id == current_user_id(db),
             ScanHistory.confirmed_at.is_not(None),
         )
     )
@@ -558,22 +558,33 @@ def add_logs_batch(payload: BatchLogIn, db: Session = Depends(get_db)):
     if submission_key:
         prior = db.get(BatchSubmission, submission_key)
         if prior:
+            logs = [db.get(FoodLog, log_id) for log_id in prior.log_ids]
+            if prior.user_id not in {None, current_user_id(db)} or any(
+                log and log.user_id != current_user_id(db) for log in logs
+            ):
+                raise HTTPException(404, "Không tìm thấy lần xác nhận")
             if prior.request_hash != request_hash:
                 raise HTTPException(409, "Mã xác nhận đã dùng với nội dung khác")
-            logs = [db.get(FoodLog, log_id) for log_id in prior.log_ids]
+            if prior.user_id is None:
+                prior.user_id = current_user_id(db)
+                db.commit()
             return {
                 "entries": [
                     log_response(log, db.get(Food, log.food_id))
                     for log in logs
-                    if log and log.visitor_id == visitor(db)
+                    if log and log.user_id == current_user_id(db)
                 ]
             }
     records = []
     history = None
     if payload.confirmation_id:
+        existing_history = db.get(ScanHistory, payload.confirmation_id)
+        if existing_history and existing_history.user_id != current_user_id(db):
+            raise HTTPException(404, "Không tìm thấy ảnh nhận diện")
         history = db.scalar(
             select(ScanHistory).where(
-                ScanHistory.id == payload.confirmation_id, ScanHistory.visitor_id == visitor(db)
+                ScanHistory.id == payload.confirmation_id,
+                ScanHistory.user_id == current_user_id(db),
             )
         )
         avoid_matches = sorted(
@@ -626,7 +637,9 @@ def add_logs_batch(payload: BatchLogIn, db: Session = Depends(get_db)):
                 food = catalog_food
             else:
                 food = db.scalar(
-                    select(Food).where(Food.owner_id == visitor(db), Food.display_name == name)
+                    select(Food).where(
+                        Food.owner_id == current_user_id(db), Food.display_name == name
+                    )
                 )
                 if food and food.kcal_100g == 0 and custom.kcal_100g > 0:
                     food.kcal_100g = custom.kcal_100g
@@ -641,7 +654,7 @@ def add_logs_batch(payload: BatchLogIn, db: Session = Depends(get_db)):
                         id=f"user-{uuid.uuid4().hex[:32]}",
                         name=f"{name[:130]} [{uuid.uuid4().hex[:12]}]",
                         display_name=name,
-                        owner_id=visitor(db),
+                        owner_id=current_user_id(db),
                         kcal_100g=custom.kcal_100g,
                         protein_100g=custom.protein_100g,
                         carb_100g=custom.carb_100g,
@@ -661,7 +674,7 @@ def add_logs_batch(payload: BatchLogIn, db: Session = Depends(get_db)):
                     db.flush()
         log = FoodLog(
             food_id=food.id,
-            visitor_id=visitor(db),
+            user_id=current_user_id(db),
             grams=item.grams,
             meal_type=item.meal_type,
             eaten_at=item.eaten_at or datetime.now(timezone.utc),
@@ -673,6 +686,7 @@ def add_logs_batch(payload: BatchLogIn, db: Session = Depends(get_db)):
         db.add(
             BatchSubmission(
                 confirmation_id=submission_key,
+                user_id=current_user_id(db),
                 request_hash=request_hash,
                 log_ids=[log.id for log, _ in created],
             )
@@ -698,7 +712,7 @@ def add_log(payload: LogIn, db: Session = Depends(get_db)):
         raise HTTPException(422, str(exc)) from exc
     record = FoodLog(
         food_id=food.id,
-        visitor_id=visitor(db),
+        user_id=current_user_id(db),
         grams=payload.grams,
         meal_type=payload.meal_type,
         eaten_at=payload.eaten_at or datetime.now(timezone.utc),
@@ -713,7 +727,7 @@ def add_log(payload: LogIn, db: Session = Depends(get_db)):
 @app.patch("/api/food-logs/{log_id}")
 def update_log(log_id: int, payload: LogUpdate, db: Session = Depends(get_db)):
     log = db.get(FoodLog, log_id)
-    if not log or log.visitor_id != visitor(db):
+    if not log or log.user_id != current_user_id(db):
         raise HTTPException(404, "Không tìm thấy món trong nhật ký")
     food = db.get(Food, log.food_id)
     try:
@@ -731,7 +745,7 @@ def update_log(log_id: int, payload: LogUpdate, db: Session = Depends(get_db)):
 @app.delete("/api/food-logs/{log_id}", status_code=204)
 def delete_log(log_id: int, db: Session = Depends(get_db)):
     log = db.get(FoodLog, log_id)
-    if not log or log.visitor_id != visitor(db):
+    if not log or log.user_id != current_user_id(db):
         raise HTTPException(404, "Không tìm thấy món trong nhật ký")
     sync_checklist_log(db, log, deleted=True)
     db.delete(log)
@@ -741,7 +755,9 @@ def delete_log(log_id: int, db: Session = Depends(get_db)):
 @app.get("/api/dashboard")
 def dashboard(day: date = Query(default_factory=local_today), db: Session = Depends(get_db)):
     logs = db.scalars(
-        select(FoodLog).where(FoodLog.visitor_id == visitor(db)).options(selectinload(FoodLog.food))
+        select(FoodLog)
+        .where(FoodLog.user_id == current_user_id(db))
+        .options(selectinload(FoodLog.food))
     ).all()
     entries = []
     totals = {key: 0.0 for key in ("kcal", "protein", "carb", "fat")}
@@ -768,7 +784,7 @@ def food_history(days: int = Query(30, ge=1, le=180), db: Session = Depends(get_
         row.day: row.targets
         for row in db.scalars(
             select(DailyNutritionGoal).where(
-                DailyNutritionGoal.visitor_id == visitor(db),
+                DailyNutritionGoal.user_id == current_user_id(db),
                 DailyNutritionGoal.day >= cutoff.isoformat(),
             )
         ).all()
@@ -778,7 +794,7 @@ def food_history(days: int = Query(30, ge=1, le=180), db: Session = Depends(get_
     current_targets = daily_targets(profile, guidance, local_today()) if profile else None
     logs = db.scalars(
         select(FoodLog)
-        .where(FoodLog.visitor_id == visitor(db))
+        .where(FoodLog.user_id == current_user_id(db))
         .options(selectinload(FoodLog.food))
         .order_by(FoodLog.eaten_at.desc())
     ).all()

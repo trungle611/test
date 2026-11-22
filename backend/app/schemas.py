@@ -6,20 +6,24 @@ nhóm tìm quy tắc kiểm tra dữ liệu ở một nơi duy nhất.
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class RegisterIn(BaseModel):
+class RequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class RegisterIn(RequestModel):
     username: str = Field(min_length=3, max_length=30)
     password: str = Field(min_length=8, max_length=128)
 
 
-class LoginIn(BaseModel):
+class LoginIn(RequestModel):
     username: str = Field(min_length=3, max_length=30)
     password: str = Field(min_length=1, max_length=128)
 
 
-class ProfileIn(BaseModel):
+class ProfileIn(RequestModel):
     age: int | None = Field(default=None, ge=18, le=120)
     height_cm: float | None = Field(default=None, ge=100, le=250)
     weight_kg: float | None = Field(default=None, ge=25, le=400)
@@ -33,17 +37,17 @@ class ProfileIn(BaseModel):
     target_kcal: float = Field(default=1800, ge=900, le=5000)
 
 
-class GuidanceChoiceIn(BaseModel):
+class GuidanceChoiceIn(RequestModel):
     food_choice: str | None = None
     workout_choice: str | None = None
 
 
-class ChecklistToggleIn(BaseModel):
+class ChecklistToggleIn(RequestModel):
     completed: bool
     amount: float | None = Field(default=None, gt=0, le=2000)
 
 
-class CustomFoodIn(BaseModel):
+class CustomFoodIn(RequestModel):
     name: str = Field(min_length=2, max_length=160)
     kcal_100g: float = Field(default=0, ge=0, le=900)
     protein_100g: float = Field(default=0, ge=0, le=100)
@@ -51,7 +55,7 @@ class CustomFoodIn(BaseModel):
     fat_100g: float = Field(default=0, ge=0, le=100)
 
 
-class LogIn(BaseModel):
+class LogIn(RequestModel):
     food_id: str | None = None
     custom_food: CustomFoodIn | None = None
     grams: float = Field(gt=0, le=2000)
@@ -60,26 +64,26 @@ class LogIn(BaseModel):
     confirmed: bool
 
 
-class BatchLogIn(BaseModel):
+class BatchLogIn(RequestModel):
     items: list[LogIn] = Field(min_length=1, max_length=5)
     confirmation_id: str | None = Field(default=None, min_length=8, max_length=80)
     avoidance_acknowledged: bool = False
 
 
-class LogUpdate(BaseModel):
+class LogUpdate(RequestModel):
     grams: float = Field(gt=0, le=2000)
     meal_type: str = Field(pattern="^(breakfast|lunch|dinner|snack)$")
 
 
-class WorkoutSelectIn(BaseModel):
+class WorkoutSelectIn(RequestModel):
     plan_id: str
 
 
-class AttendanceIn(BaseModel):
+class AttendanceIn(RequestModel):
     status: str = Field(pattern="^(attended|missed)$")
 
 
-class PlanIn(BaseModel):
+class PlanIn(RequestModel):
     week_start: date
     target_kcal: float = Field(ge=900, le=5000)
     avoid_tags: list[str] = Field(default_factory=list)
