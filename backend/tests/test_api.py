@@ -1,20 +1,14 @@
-import os
-import tempfile
 from datetime import datetime, timedelta
 from io import BytesIO
 
 from fastapi.testclient import TestClient
 from PIL import Image
 
-dbfile = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-dbfile.close()
-os.environ["DATABASE_URL"] = f"sqlite:///{dbfile.name}"
-scan_upload_dir = tempfile.mkdtemp(prefix="hbtnfit-scans-")
-os.environ["SCAN_UPLOAD_DIR"] = scan_upload_dir
-
 from app.db import Base, SessionLocal, engine
 from app.main import app, local_today
 from app.models import Food
+
+from .support import account_headers, authenticated_client
 
 
 def setup_module():
@@ -40,7 +34,7 @@ def setup_module():
 
 
 def test_confirm_and_dashboard():
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         assert (
             client.post(
                 "/api/food-logs",
@@ -71,7 +65,7 @@ def test_scan_reports_classified_failure_without_saving_food(monkeypatch):
     monkeypatch.setattr("app.ai.scan_image", unavailable)
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         before = client.get("/api/dashboard").json()
         response = client.post(
             "/api/scan", files={"file": ("food.png", image.getvalue(), "image/png")}
@@ -94,7 +88,7 @@ def test_scan_hides_provider_details_and_preserves_meals(monkeypatch, caplog):
     ]
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         before = client.get("/api/dashboard").json()
         for failure in failures:
 
@@ -124,7 +118,7 @@ def test_malformed_ai_dishes_return_503_without_changing_meals(monkeypatch):
     monkeypatch.setattr(ai, "client", lambda *_: fake)
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         before = client.get("/api/dashboard").json()
         response = client.post(
             "/api/scan", files={"file": ("food.png", image.getvalue(), "image/png")}
@@ -150,7 +144,7 @@ def test_slow_scan_does_not_block_health_endpoint(monkeypatch):
     monkeypatch.setattr("app.ai.scan_image", slow_scan)
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    with TestClient(app) as client, ThreadPoolExecutor(max_workers=2) as executor:
+    with authenticated_client() as client, ThreadPoolExecutor(max_workers=2) as executor:
         scan_request = executor.submit(
             client.post, "/api/scan", files={"file": ("food.png", image.getvalue(), "image/png")}
         )
@@ -168,8 +162,8 @@ def test_food_history_preserves_daily_targets_and_account_scope(monkeypatch):
     yesterday = today - timedelta(days=1)
     day = [yesterday]
     monkeypatch.setattr("app.main.local_today", lambda: day[0])
-    headers = {"X-Visitor-Id": "319a3e21-6951-44f5-a149-d09d78330521"}
-    other = {"X-Visitor-Id": "319a3e21-6951-44f5-a149-d09d78330522"}
+    headers = account_headers()
+    other = account_headers()
     payload = {
         "age": 22,
         "height_cm": 170,
@@ -180,7 +174,7 @@ def test_food_history_preserves_daily_targets_and_account_scope(monkeypatch):
         "activity_level": "moderate",
         "goal": "gain",
     }
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         saved = client.put("/api/profile", headers=headers, json=payload)
         assert saved.status_code == 200
         original_kcal = saved.json()["daily_targets"]["kcal"]
@@ -212,9 +206,9 @@ def test_food_history_preserves_daily_targets_and_account_scope(monkeypatch):
 
 def test_dated_daily_targets_are_scoped_and_reject_past_date():
     deadline = (local_today() + timedelta(days=90)).isoformat()
-    first = {"X-Visitor-Id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
-    second = {"X-Visitor-Id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
-    with TestClient(app) as client:
+    first = account_headers()
+    second = account_headers()
+    with authenticated_client() as client:
         mismatch = client.put(
             "/api/profile",
             headers=first,
@@ -295,7 +289,7 @@ def test_dated_daily_targets_are_scoped_and_reject_past_date():
 
 
 def test_scan_rejects_bad_upload():
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         response = client.post("/api/scan", files={"file": ("bad.txt", b"hello", "text/plain")})
         assert response.status_code == 415
 
@@ -321,9 +315,9 @@ def test_scan_groups_dishes_and_requires_selection(monkeypatch):
     )
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    first = {"X-Visitor-Id": "44444444-4444-4444-8444-444444444444"}
-    second = {"X-Visitor-Id": "55555555-5555-4555-8555-555555555555"}
-    with TestClient(app) as client:
+    first = account_headers()
+    second = account_headers()
+    with authenticated_client() as client:
         response = client.post(
             "/api/scan",
             headers=first,
@@ -376,7 +370,7 @@ def test_scan_returns_editable_nutrition_estimate(monkeypatch):
     )
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         dish = client.post(
             "/api/scan", files={"file": ("meal.png", image.getvalue(), "image/png")}
         ).json()["dishes"][0]
@@ -411,8 +405,8 @@ def test_unknown_dish_per_gram_estimate_scales_when_confirmed(monkeypatch):
     )
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    headers = {"X-Visitor-Id": "595fe856-401a-4595-a229-0e9029b62632"}
-    with TestClient(app) as client:
+    headers = account_headers()
+    with authenticated_client() as client:
         response = client.post(
             "/api/scan",
             headers=headers,
@@ -476,7 +470,7 @@ def test_csv_catalog_is_used_for_scan_and_serving_nutrition(monkeypatch):
     monkeypatch.setattr("app.ai.scan_image", fake_scan)
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         result = client.post(
             "/api/scan", files={"file": ("pho.png", image.getvalue(), "image/png")}
         )
@@ -516,8 +510,8 @@ def test_scan_warns_and_requires_acknowledgement_for_avoided_ingredient(monkeypa
     )
     image = BytesIO()
     Image.new("RGB", (32, 32), "white").save(image, format="PNG")
-    headers = {"X-Visitor-Id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"}
-    with TestClient(app) as client:
+    headers = account_headers()
+    with authenticated_client() as client:
         saved = client.put("/api/profile", headers=headers, json={"avoid_tags": ["thịt"]})
         assert saved.status_code == 200
         scan = client.post(
@@ -537,7 +531,7 @@ def test_scan_warns_and_requires_acknowledgement_for_avoided_ingredient(monkeypa
 
 
 def test_zero_nutrition_custom_food_can_be_corrected():
-    headers = {"X-Visitor-Id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc"}
+    headers = account_headers()
     first = {
         "items": [
             {
@@ -564,7 +558,7 @@ def test_zero_nutrition_custom_food_can_be_corrected():
             }
         ]
     }
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         assert client.post("/api/food-logs/batch", headers=headers, json=first).status_code == 201
         corrected = client.post("/api/food-logs/batch", headers=headers, json=updated)
         assert corrected.status_code == 201
@@ -575,7 +569,7 @@ def test_zero_nutrition_custom_food_can_be_corrected():
 def test_batch_logs_are_all_or_nothing():
     valid = {"food_id": "T1", "grams": 100, "meal_type": "lunch", "confirmed": True}
     invalid = {**valid, "food_id": "UNKNOWN"}
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         before = len(client.get("/api/dashboard").json()["entries"])
         assert (
             client.post("/api/food-logs/batch", json={"items": [valid, invalid]}).status_code == 404
@@ -587,7 +581,7 @@ def test_batch_logs_are_all_or_nothing():
 
 
 def test_log_can_be_edited_and_deleted():
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         created = client.post(
             "/api/food-logs",
             json={"food_id": "T1", "grams": 100, "meal_type": "lunch", "confirmed": True},
@@ -612,7 +606,7 @@ def test_repeated_confirmation_does_not_duplicate_meals():
         "confirmation_id": "demo-confirmation-001",
         "items": [{"food_id": "T1", "grams": 150, "meal_type": "lunch", "confirmed": True}],
     }
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         before = len(client.get("/api/dashboard").json()["entries"])
         first = client.post("/api/food-logs/batch", json=payload)
         second = client.post("/api/food-logs/batch", json=payload)
@@ -641,7 +635,7 @@ def test_custom_food_can_be_confirmed_and_replayed():
             }
         ],
     }
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         before = client.get("/api/dashboard").json()["totals"]["kcal"]
         first = client.post("/api/food-logs/batch", json=payload)
         assert first.status_code == 201
@@ -667,7 +661,7 @@ def test_manual_food_matching_catalog_is_confirmed_as_catalog_food():
             }
         ]
     }
-    with TestClient(app) as client:
+    with authenticated_client() as client:
         response = client.post("/api/food-logs/batch", json=payload)
         assert response.status_code == 201
         assert response.json()["entries"][0]["food_id"] == "T1"
@@ -691,8 +685,8 @@ def test_custom_100g_input_does_not_silently_become_a_serving_item():
             }
         ]
     }
-    headers = {"X-Visitor-Id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"}
-    with TestClient(app) as client:
+    headers = account_headers()
+    with authenticated_client() as client:
         response = client.post("/api/food-logs/batch", headers=headers, json=payload)
         assert response.status_code == 201
         entry = response.json()["entries"][0]
@@ -701,14 +695,13 @@ def test_custom_100g_input_does_not_silently_become_a_serving_item():
         assert entry["nutrition"]["kcal"] == 100
 
 
-def test_public_demo_requires_visitor_id(monkeypatch):
-    monkeypatch.setenv("REQUIRE_VISITOR_ID", "1")
+def test_private_routes_require_authenticated_account():
     with TestClient(app) as client:
-        assert client.get("/api/profile").status_code == 400
-        assert client.get("/api/profile", headers={"X-Visitor-Id": "not-a-uuid"}).status_code == 400
+        assert client.get("/api/profile").status_code == 401
+        assert client.get("/api/profile", headers={"X-Visitor-Id": "not-a-uuid"}).status_code == 401
         assert (
             client.get(
                 "/api/profile", headers={"X-Visitor-Id": "33333333-3333-4333-8333-333333333333"}
             ).status_code
-            == 200
+            == 401
         )
