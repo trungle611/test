@@ -49,6 +49,7 @@ from .schemas import (
     LogUpdate,
     ProfileIn,
 )
+from .workout_routes import router as workout_router
 
 LOCAL_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -85,6 +86,7 @@ async def lifespan(app):
 
 app = FastAPI(title="HBTNFIT API", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router)
+app.include_router(workout_router)
 
 
 LOCAL_ORIGINS = [
@@ -191,7 +193,7 @@ def health():
     return {
         "status": "ok",
         "application": "HBTNFIT",
-        "stage": "food",
+        "stage": "food-workout",
         "ai_configured": bool(os.getenv("GEMINI_API_KEY")),
     }
 

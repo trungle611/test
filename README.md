@@ -1,6 +1,6 @@
 # HBTNFIT
 
-HBTNFIT dùng React + Vite, FastAPI và SQLite. Bản này đã nối luồng ăn uống: tải ảnh, nhận gợi ý Gemini, chọn bữa, sửa món/khẩu phần, xác nhận, cập nhật thực đơn và xem lịch sử. Đăng nhập, trang cá nhân và tập luyện chưa được tích hợp vào giao diện này.
+HBTNFIT dùng React + Vite, FastAPI và SQLite. Bản này đã nối luồng ăn uống, tài khoản và tập luyện. Dữ liệu cá nhân được giới hạn theo tài khoản đăng nhập. Trang cá nhân và gợi ý mục tiêu vẫn là phần tích hợp tiếp theo; các API hồ sơ hiện có đã được bảo vệ theo tài khoản.
 
 Backend nạp hai danh mục CSV trong `data/` khi khởi động. Xem [mô tả cấu trúc, đơn vị và nguồn dữ liệu](data/README.md).
 
@@ -24,11 +24,42 @@ npm ci
 npm run dev
 ```
 
-Mở [frontend](http://127.0.0.1:5173) để thử luồng ăn uống. Tài liệu API ở [Swagger](http://127.0.0.1:8000/docs). Hai cổng 8000 và 5173 cần còn trống.
+Mở [frontend](http://127.0.0.1:5173), đăng ký một tài khoản rồi đăng nhập để thử ăn uống và tập luyện. Tài liệu API ở [Swagger](http://127.0.0.1:8000/docs). Hai cổng 8000 và 5173 cần còn trống.
 
 Để nhận diện thật, điền `GEMINI_API_KEY` và model được phép sử dụng trong `backend/.env`. Có thể điền `GEMINI_FALLBACK_API_KEY` nếu có khóa dự phòng. Không có key vẫn chạy được ứng dụng và kiểm thử bằng giả lập; giao diện sẽ báo lỗi nhận diện và cho nhập món thủ công. Không có chế độ giả lập Gemini được bật sẵn trong ứng dụng.
 
-SQLite tạo `backend/hbtnfit.db` khi chạy bằng lệnh trên. Ảnh lịch sử lưu trong `backend/uploads/scans`. Bản này nhận diện phiên sử dụng bằng mã lưu trong trình duyệt. Không commit `.env`, database, ảnh người dùng hoặc thư mục runtime.
+SQLite tạo `backend/hbtnfit.db` khi chạy bằng lệnh trên. Ảnh lịch sử lưu trong `backend/uploads/scans`. Mọi API dữ liệu cá nhân yêu cầu Bearer token hợp lệ và tài khoản còn tồn tại. Backend lấy `user_id` từ token đã xác minh, bỏ qua `X-Visitor-Id`; frontend không được chỉ định chủ sở hữu qua payload. Không commit `.env`, database, ảnh người dùng hoặc thư mục runtime.
+
+## Database mới và nâng cấp database cũ
+
+Không copy database hoặc `.env` giữa các thành viên. Mỗi máy tạo DB riêng, dùng cùng CSV trong repo.
+
+- Database mới: chạy backend lần đầu sẽ tự tạo bảng và nạp CSV. Có thể thực hiện riêng bằng `python -m app.init_db` từ thư mục `backend` sau khi cấu hình `.env`.
+- Để tạo DB mới mà vẫn giữ bản cũ: tắt backend, đặt `DATABASE_URL=sqlite:///./hbtnfit_moi.db` trong `backend/.env`, rồi chạy lệnh khởi tạo. Không xóa file DB cũ.
+- Trước khi nâng cấp DB có dữ liệu: tắt backend, sao lưu file `.db` và thư mục `backend/uploads/scans`. Nếu SQLite còn file `-wal`/`-shm`, cần đóng hết kết nối trước khi sao chép, hoặc dùng công cụ backup SQLite. Sao lưu cả `.runtime/auth-secret` nếu đang dùng khóa local tự sinh.
+- Khi khởi động bản mới, migration tự đổi cột `visitor_id` thành `user_id`, bổ sung cột sở hữu còn thiếu và index. Chạy lại không tạo trùng bảng hoặc xóa bản ghi.
+- Dữ liệu phiên demo cũ vẫn được giữ, nhưng không tự gán cho tài khoản mới. Chỉ token hợp lệ của một tài khoản có đúng ID mới truy cập được dữ liệu. Lịch tập cũ chưa có chủ sở hữu được giữ trong DB nhưng không đưa vào lịch của tài khoản mới.
+- Model mới dùng khóa ngoại tới `users` và index theo `user_id`. Với DB SQLite cũ, migration giữ cấu trúc và ràng buộc sẵn có; không dựng lại toàn bộ bảng để bổ sung mọi khóa ngoại. Quyền truy cập vẫn được kiểm tra ở API.
+- DB mới tạo unique index cho hồ sơ, gợi ý và giáo án đang chọn theo tài khoản. Nếu DB cũ có nhiều hồ sơ cùng một ID, cần rà soát bản sao trước khi nâng cấp; không tự xóa bản ghi để vượt qua lỗi ràng buộc.
+- `username` đang ánh xạ vào cột SQL `users.email` để đọc được DB của bản trước. Giao diện/API chỉ sử dụng tên đăng nhập, không yêu cầu email.
+- Không lưu ảnh nhị phân vào SQLite: `scan_history` chỉ giữ khóa đường dẫn, metadata và kết quả; API xem ảnh luôn kiểm tra tài khoản sở hữu.
+
+SQLite cần phiên bản 3.25+ để đổi tên cột. Quy trình demo được kiểm thử bằng SQLite; cần kiểm tra riêng migration trước khi triển khai PostgreSQL với dữ liệu thật.
+
+## Tài khoản và phiên đăng nhập
+
+Đăng ký bằng tên đăng nhập, mật khẩu và xác nhận mật khẩu. Mật khẩu được băm PBKDF2 với salt; token được ký ở backend. Đăng xuất sẽ xóa token và hủy state giao diện của tài khoản cũ. Token sai, hết hạn hoặc thuộc tài khoản không tồn tại bị từ chối với mã 401. Token hiện có hạn 7 ngày; đăng xuất ở trình duyệt chưa thu hồi token trên các thiết bị khác.
+
+Khi chạy local, nếu `AUTH_SECRET` để trống, ứng dụng tự sinh khóa ngẫu nhiên và lưu trong `backend/.runtime/auth-secret` (đã được Git bỏ qua). Không dùng khóa ký cố định công khai. Khi triển khai, cấu hình `AUTH_SECRET` riêng ít nhất 32 ký tự; các tiến trình backend phải dùng cùng khóa. Không đưa khóa thật, DB hoặc ảnh người dùng lên Git.
+
+## Tập luyện
+
+1. Vào **Tập luyện**, chọn một trong bốn giáo án: PPL hoặc Upper/Lower, theo nhóm tăng cơ hoặc giảm cân.
+2. Mở **Xem bài tập từng buổi** để xem tên bài cụ thể, nhóm cơ, số hiệp và số lần. Buổi tập hiển thị thêm hướng dẫn động tác và thời gian nghỉ.
+3. Chọn **Có đi tập** hoặc **Nghỉ hôm nay**. Lịch tháng hiển thị xanh cho ngày đi tập/hoàn thành, đỏ cho ngày đã chọn nghỉ; ngày chưa ghi nhận giữ màu xám.
+4. Bắt đầu từng bài rồi đánh dấu hoàn thành. Chỉ sau khi hoàn thành tất cả bài, lần đi tập sau mới chuyển sang buổi kế tiếp. Ngày nghỉ không đẩy lịch sang buổi mới.
+5. Trạng thái bài đã làm được giữ khi tiếp tục cùng buổi qua ngày khác. Chu kỳ mới không dùng lại trạng thái của chu kỳ trước. Bản này cho hoàn thành tối đa một buổi mỗi giáo án trong một ngày.
+6. Đổi giáo án không xóa lịch đi tập. Lịch tháng tổng hợp tất cả giáo án của cùng tài khoản; tiến độ từng giáo án được giữ riêng.
 
 ## Luồng sử dụng
 
@@ -70,12 +101,20 @@ backend/
   app/schemas.py       kiểm tra dữ liệu đầu vào
   app/catalog.py       nạp CSV
   app/core.py          đối chiếu món và tính dinh dưỡng
+  app/auth_routes.py   đăng ký, đăng nhập và thông tin phiên
+  app/migrations.py    nâng cấp quyền sở hữu dữ liệu cũ
+  app/init_db.py       lệnh tạo/nâng cấp DB và nạp CSV
+  app/workout_routes.py giáo án, tiến độ và lịch đi tập
+  app/workout_plans.py tên bài, nhóm cơ và hướng dẫn
   app/ai.py            gọi Gemini và xử lý lỗi
   app/scan_service.py  kiểm tra ảnh, chuẩn hóa món và lưu ảnh lịch sử
   app/goals.py         tính mục tiêu và đánh giá lịch sử dinh dưỡng
-  tests/              health check và kiểm thử luồng ăn uống
+  tests/              ăn uống, lỗi AI, hai tài khoản, migration và tập luyện
 frontend/
-  src/App.jsx          bố cục và điều hướng
+  src/App.jsx          phiên đăng nhập, bố cục và điều hướng
+  src/AuthPage.jsx     biểu mẫu tài khoản
+  src/WorkoutPlans.jsx chọn và xem giáo án
+  src/WorkoutPanel.jsx bài tập và lịch xanh/đỏ
   src/api.js           hàm gọi API
   src/constants.js     nhãn bữa ăn và dinh dưỡng
   src/style.css        giao diện nền và responsive
