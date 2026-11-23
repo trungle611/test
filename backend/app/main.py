@@ -24,7 +24,6 @@ from .core import (
 )
 from .db import get_db, initialize_database
 from .goals import assess_daily_intake, daily_targets
-from .guidance_service import build_food_checklist
 from .models import (
     AiRun,
     BatchSubmission,
@@ -34,6 +33,19 @@ from .models import (
     Profile,
     ProfileGuidance,
     ScanHistory,
+)
+from .profile_routes import router as profile_router
+from .profile_service import (
+    GOAL_ANALYSIS_VERSION,
+    guidance_record,
+    profile_record,
+    validate_profile,
+)
+from .profile_service import (
+    food_checklist_for as profile_checklist,
+)
+from .profile_service import (
+    profile_data as serialize_profile,
 )
 from .scan_service import (
     MAX_IMAGE_BYTES,
@@ -52,9 +64,6 @@ from .schemas import (
 from .workout_routes import router as workout_router
 
 LOCAL_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
-
-
-GOAL_ANALYSIS_VERSION = "macro-targets-v3-kcal-fit"
 
 
 MEAL_TYPES = {"breakfast", "lunch", "dinner", "snack"}
@@ -87,6 +96,7 @@ async def lifespan(app):
 app = FastAPI(title="HBTNFIT API", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(workout_router)
+app.include_router(profile_router)
 
 
 LOCAL_ORIGINS = [
@@ -127,14 +137,6 @@ def accessible_foods(db, include_aliases=False):
     if include_aliases:
         query = query.options(selectinload(Food.aliases))
     return db.scalars(query).all()
-
-
-def profile_record(db):
-    return db.scalar(select(Profile).where(Profile.user_id == current_user_id(db)))
-
-
-def guidance_record(db):
-    return db.scalar(select(ProfileGuidance).where(ProfileGuidance.user_id == current_user_id(db)))
 
 
 def save_today_nutrition_goal(db, profile=None, guidance=None):
@@ -193,20 +195,13 @@ def health():
     return {
         "status": "ok",
         "application": "HBTNFIT",
-        "stage": "food-workout",
+        "stage": "food-workout-profile",
         "ai_configured": bool(os.getenv("GEMINI_API_KEY")),
     }
 
 
 def food_checklist_for(guidance):
-    """Trả checklist đã lưu hoặc dựng lại cho lựa chọn được tạo trước tính năng này."""
-    if not guidance:
-        return {"date": None, "items": []}
-    if guidance.food_checklist:
-        return guidance.food_checklist
-    options = (guidance.analysis or {}).get("food_options", [])
-    selected = next((item for item in options if item.get("id") == guidance.food_choice), None)
-    return build_food_checklist(selected or {"id": guidance.food_choice}, local_today())
+    return profile_checklist(guidance, local_today())
 
 
 def sync_checklist_log(db, log, deleted=False):
@@ -228,44 +223,7 @@ def sync_checklist_log(db, log, deleted=False):
 
 
 def profile_data(profile, guidance=None):
-    analysis = (
-        guidance.analysis
-        if guidance
-        and guidance.analysis
-        and guidance.analysis.get("target_version") == GOAL_ANALYSIS_VERSION
-        else None
-    )
-    checklist = food_checklist_for(guidance)
-    checklist_items = [
-        {
-            **item,
-            "completed": item.get("completed", False)
-            if checklist.get("date") == local_today().isoformat()
-            else False,
-            "log_id": item.get("log_id")
-            if checklist.get("date") == local_today().isoformat()
-            else None,
-        }
-        for item in checklist.get("items", [])
-    ]
-    return {
-        "age": profile.age,
-        "height_cm": profile.height_cm,
-        "weight_kg": profile.weight_kg,
-        "sex": profile.sex,
-        "activity_level": profile.activity_level,
-        "protein_mode": profile.protein_mode or "balanced",
-        "goal": profile.goal,
-        "avoid_tags": profile.avoid_tags or [],
-        "target_kcal": profile.target_kcal,
-        "target_weight_kg": guidance.target_weight_kg if guidance else None,
-        "target_date": guidance.target_date if guidance else None,
-        "daily_targets": daily_targets(profile, guidance, local_today()),
-        "analysis": analysis,
-        "food_choice": guidance.food_choice if analysis else None,
-        "food_checklist": checklist_items if analysis else [],
-        "workout_choice": guidance.workout_choice if analysis else None,
-    }
+    return serialize_profile(profile, guidance, local_today())
 
 
 @app.get("/api/profile")
@@ -287,17 +245,10 @@ def get_profile(db: Session = Depends(get_db)):
 
 @app.put("/api/profile")
 def save_profile(payload: ProfileIn, db: Session = Depends(get_db)):
-    if payload.target_date and payload.target_date <= local_today():
-        raise HTTPException(422, "Ngày hoàn thành mục tiêu phải sau hôm nay")
-    if payload.weight_kg is not None and payload.target_weight_kg is not None:
-        difference = payload.target_weight_kg - payload.weight_kg
-        expected_goal = "gain" if difference > 0.1 else "lose" if difference < -0.1 else "maintain"
-        if payload.goal != expected_goal:
-            labels = {"gain": "Tăng cân", "lose": "Giảm cân", "maintain": "Duy trì"}
-            raise HTTPException(
-                422,
-                f"Cân nặng mong muốn phù hợp với mục tiêu {labels[expected_goal]}. Hãy chọn lại mục tiêu",
-            )
+    try:
+        validate_profile(payload, local_today())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     profile = profile_record(db) or Profile(user_id=current_user_id(db))
     guidance = guidance_record(db) or ProfileGuidance(user_id=current_user_id(db))
     if (
