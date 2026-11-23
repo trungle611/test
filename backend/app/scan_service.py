@@ -2,20 +2,17 @@
 
 import hashlib
 import math
-import os
 from io import BytesIO
-from pathlib import Path
 
 from fastapi import HTTPException
 from PIL import Image, UnidentifiedImageError
 
 from .core import find_avoid_matches, match_foods
+from .settings import scan_directory
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
-SCAN_UPLOAD_DIR = Path(
-    os.getenv("SCAN_UPLOAD_DIR", Path(__file__).resolve().parents[1] / "uploads" / "scans")
-)
+SCAN_UPLOAD_DIR = scan_directory()
 
 
 def validate_scan_result(result):

@@ -5,7 +5,10 @@ import json
 import os
 import secrets
 import time
+import uuid
 from pathlib import Path
+
+from .settings import data_directory, production
 
 PASSWORD_ITERATIONS = 240_000
 TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60
@@ -25,10 +28,10 @@ def _secret() -> bytes:
         if len(value) < 32:
             raise RuntimeError("AUTH_SECRET cần ít nhất 32 ký tự")
         return value.encode()
-    if os.getenv("VERCEL"):
+    if production():
         raise RuntimeError("Thiếu AUTH_SECRET cho môi trường production")
     # Khóa local ngẫu nhiên và bền qua lần khởi động; không dùng khóa mặc định công khai.
-    path = Path(__file__).resolve().parents[1] / ".runtime" / "auth-secret"
+    path = data_directory(Path(__file__).resolve().parents[1]) / "auth-secret"
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with path.open("x", encoding="utf-8") as stream:
@@ -62,7 +65,8 @@ def verify_password(password: str, stored: str) -> bool:
 def create_token(user_id: str) -> str:
     payload = _encode(
         json.dumps(
-            {"sub": user_id, "exp": int(time.time()) + TOKEN_TTL_SECONDS}, separators=(",", ":")
+            {"sub": user_id, "exp": int(time.time()) + TOKEN_TTL_SECONDS, "sid": uuid.uuid4().hex},
+            separators=(",", ":"),
         ).encode()
     )
     signature = _encode(hmac.new(_secret(), payload.encode(), hashlib.sha256).digest())
