@@ -7,13 +7,14 @@ import ScanSection from './ScanSection.jsx';
 import TodayMeals from './TodayMeals.jsx';
 import WorkoutPlans from './WorkoutPlans.jsx';
 import WorkoutPanel from './WorkoutPanel.jsx';
+import ProfilePanel from './ProfilePanel.jsx';
 import { apiCall, getAuthToken, saveAuthToken, clearAuthToken } from './api.js';
 
 const navigation = [
   { id: 'home', label: 'Trang chủ', icon: House },
   { id: 'food', label: 'Ăn uống', icon: UtensilsCrossed },
   { id: 'workout', label: 'Tập luyện', icon: Dumbbell },
-  { id: 'profile', label: 'Cá nhân', icon: UserRound, pending: true },
+  { id: 'profile', label: 'Cá nhân', icon: UserRound },
 ];
 
 function currentMealType() {
@@ -27,9 +28,14 @@ function currentMealType() {
 export default function App() {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
+  const [sessionError, setSessionError] = useState('');
+  const [sessionVersion, setSessionVersion] = useState(0);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setChecking(true);
+    setSessionError('');
     if (!getAuthToken()) {
       setChecking(false);
       return;
@@ -40,6 +46,7 @@ export default function App() {
       })
       .catch((error) => {
         if (active && error.status === 401) clearAuthToken();
+        else if (active) setSessionError(error.message);
       })
       .finally(() => {
         if (active) setChecking(false);
@@ -47,21 +54,39 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [sessionVersion]);
 
   useEffect(() => {
     const expired = () => setUser(null);
+    const changed = (event) => {
+      if (event.key === 'hbtnfit_auth_token') {
+        setUser(null);
+        setSessionVersion((value) => value + 1);
+      }
+    };
     window.addEventListener('hbtnfit-session-expired', expired);
-    return () => window.removeEventListener('hbtnfit-session-expired', expired);
+    window.addEventListener('storage', changed);
+    return () => {
+      window.removeEventListener('hbtnfit-session-expired', expired);
+      window.removeEventListener('storage', changed);
+    };
   }, []);
 
   function authenticated(result) {
     saveAuthToken(result.access_token);
     setUser(result.user);
   }
-  function logout() {
-    clearAuthToken();
-    setUser(null);
+  async function logout() {
+    setLoggingOut(true);
+    try {
+      await apiCall('/api/auth/logout', { method: 'POST' });
+      clearAuthToken();
+      setUser(null);
+    } catch (error) {
+      if (error.status !== 401) window.alert(`${error.message} Chưa đăng xuất được; hãy thử lại.`);
+    } finally {
+      setLoggingOut(false);
+    }
   }
   if (checking)
     return (
@@ -69,12 +94,21 @@ export default function App() {
         Đang kiểm tra phiên đăng nhập…
       </main>
     );
+  if (sessionError)
+    return (
+      <main className="auth-checking">
+        <p role="alert">{sessionError}</p>
+        <button className="secondary-button" onClick={() => setSessionVersion((v) => v + 1)}>
+          Thử lại
+        </button>
+      </main>
+    );
   if (!user) return <AuthPage onAuthenticated={authenticated} />;
   // Đổi tài khoản sẽ hủy toàn bộ state và ảnh của tài khoản trước.
-  return <SignedInApp key={user.id} user={user} logout={logout} />;
+  return <SignedInApp key={user.id} user={user} logout={logout} loggingOut={loggingOut} />;
 }
 
-function SignedInApp({ user, logout }) {
+function SignedInApp({ user, logout, loggingOut }) {
   const [section, setSection] = useState('food');
   const [navOpen, setNavOpen] = useState(false);
   const [foods, setFoods] = useState([]);
@@ -153,8 +187,8 @@ function SignedInApp({ user, logout }) {
           <span className="topbar-caption">Dinh dưỡng & Tập luyện</span>
           <div className="account-actions">
             <span>{user.username}</span>
-            <button className="link-button" onClick={logout}>
-              Đăng xuất
+            <button className="link-button" disabled={loggingOut} onClick={logout}>
+              {loggingOut ? 'Đang đăng xuất…' : 'Đăng xuất'}
             </button>
           </div>
         </div>
@@ -194,12 +228,16 @@ function SignedInApp({ user, logout }) {
                   ? 'Tổng quan hôm nay'
                   : section === 'workout'
                     ? 'Tập luyện'
-                    : 'Ăn uống'}
+                    : section === 'profile'
+                      ? 'Cá nhân'
+                      : 'Ăn uống'}
               </h1>
               <p>
                 {section === 'workout'
                   ? 'Chọn giáo án, tiếp tục buổi đang tập và theo dõi lịch đi tập/nghỉ.'
-                  : 'Nhận diện món ăn, xác nhận khẩu phần và theo dõi thực đơn.'}
+                  : section === 'profile'
+                    ? 'Cập nhật thông tin và mục tiêu dinh dưỡng của bạn.'
+                    : 'Nhận diện món ăn, xác nhận khẩu phần và theo dõi thực đơn.'}
               </p>
             </div>
           </div>
@@ -216,6 +254,8 @@ function SignedInApp({ user, logout }) {
           )}
           {!loaded ? (
             <p role="status">Đang tải thực đơn và danh mục món ăn…</p>
+          ) : section === 'profile' ? (
+            <ProfilePanel profile={profile} call={apiCall} refresh={refresh} navigate={navigate} />
           ) : section === 'workout' ? (
             <div className="training-page">
               <WorkoutPlans
@@ -257,6 +297,7 @@ function SignedInApp({ user, logout }) {
                     call={apiCall}
                     refresh={refresh}
                     onError={setNotice}
+                    onOpenProfile={() => navigate('profile')}
                   />
                 </div>
               </div>

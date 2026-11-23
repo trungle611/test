@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
 const TOKEN_KEY = 'hbtnfit_auth_token';
 
 const validationTranslations = {
@@ -30,7 +30,20 @@ export async function apiCall(path, options = {}) {
   const token = localStorage.getItem(TOKEN_KEY);
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
-  const response = await fetch(`${API_BASE}${path}`, { ...fetchOptions, headers });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...fetchOptions,
+      headers,
+      signal: fetchOptions.signal || AbortSignal.timeout(90000),
+    });
+  } catch (cause) {
+    throw new Error(
+      cause.name === 'TimeoutError'
+        ? 'Yêu cầu mất quá nhiều thời gian. Hãy thử tải lại để kiểm tra kết quả trước khi gửi lại.'
+        : 'Không kết nối được. Hãy kiểm tra mạng rồi thử lại.',
+    );
+  }
   if (responseType === 'blob' && response.ok) return response.blob();
 
   const body = await response.json().catch(() => ({}));
@@ -41,7 +54,7 @@ export async function apiCall(path, options = {}) {
       response.status === 401 &&
       token &&
       getAuthToken() === token &&
-      !path.startsWith('/api/auth/')
+      !['/api/auth/login', '/api/auth/register'].includes(path)
     ) {
       clearAuthToken();
       window.dispatchEvent(new Event('hbtnfit-session-expired'));

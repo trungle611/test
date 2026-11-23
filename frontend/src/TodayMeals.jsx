@@ -263,7 +263,7 @@ export default function TodayMeals({
         </div>
       ) : (
         <div className="daily-goal daily-goal-empty">
-          <span>Chưa có mục tiêu kcal và protein mỗi ngày.</span>
+          <span>Chưa có mục tiêu kcal, protein, carb và chất béo mỗi ngày.</span>
           {onOpenProfile && (
             <button className="link-button" onClick={onOpenProfile}>
               Thiết lập trong Cá nhân →

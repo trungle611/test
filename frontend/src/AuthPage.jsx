@@ -132,7 +132,7 @@ export default function AuthPage({ onAuthenticated }) {
           </form>
           <div className="auth-switch">
             {isRegister ? 'Đã có tài khoản?' : 'Chưa có tài khoản?'}{' '}
-            <button onClick={() => switchMode(isRegister ? 'login' : 'register')}>
+            <button disabled={busy} onClick={() => switchMode(isRegister ? 'login' : 'register')}>
               {isRegister ? 'Đăng nhập' : 'Đăng ký ngay'}
             </button>
           </div>
