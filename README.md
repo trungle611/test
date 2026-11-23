@@ -1,17 +1,19 @@
 # HBTNFIT
 
-HBTNFIT dùng React + Vite, FastAPI và SQLite. Bản này đã nối luồng ăn uống, tài khoản và tập luyện. Dữ liệu cá nhân được giới hạn theo tài khoản đăng nhập. Trang cá nhân và gợi ý mục tiêu vẫn là phần tích hợp tiếp theo; các API hồ sơ hiện có đã được bảo vệ theo tài khoản.
+HBTNFIT dùng React + Vite, FastAPI và SQLite. Ứng dụng kết nối ăn uống, tài khoản, tập luyện và mục tiêu cá nhân. Dữ liệu cá nhân được giới hạn theo tài khoản đăng nhập. Trang Cá nhân tính thử/lưu kcal, protein, carb và chất béo, tạo gợi ý theo CSV và chuyển sang Ăn uống để theo dõi.
+
+Xem [hướng dẫn Windows, macOS, tunnel và cấu hình frontend Vercel/backend lưu bền](DEPLOYMENT.md). File `.env.example` chỉ là mẫu; giữ nguyên `.env` riêng nếu đã có.
 
 Backend nạp hai danh mục CSV trong `data/` khi khởi động. Xem [mô tả cấu trúc, đơn vị và nguồn dữ liệu](data/README.md).
 
 ## Chạy local
 
-Yêu cầu Python 3.11+, Node.js 20+ và Git. Chạy các lệnh sau từ thư mục gốc repo:
+Yêu cầu Python 3.11+, Node.js 22 và Git. Chạy các lệnh sau từ thư mục gốc repo:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r backend\requirements-dev.txt
-Copy-Item backend\.env.example backend\.env
+if (!(Test-Path backend/.env)) { Copy-Item backend/.env.example backend/.env }
 cd backend
 ..\.venv\Scripts\python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -28,7 +30,7 @@ Mở [frontend](http://127.0.0.1:5173), đăng ký một tài khoản rồi đă
 
 Để nhận diện thật, điền `GEMINI_API_KEY` và model được phép sử dụng trong `backend/.env`. Có thể điền `GEMINI_FALLBACK_API_KEY` nếu có khóa dự phòng. Không có key vẫn chạy được ứng dụng và kiểm thử bằng giả lập; giao diện sẽ báo lỗi nhận diện và cho nhập món thủ công. Không có chế độ giả lập Gemini được bật sẵn trong ứng dụng.
 
-SQLite tạo `backend/hbtnfit.db` khi chạy bằng lệnh trên. Ảnh lịch sử lưu trong `backend/uploads/scans`. Mọi API dữ liệu cá nhân yêu cầu Bearer token hợp lệ và tài khoản còn tồn tại. Backend lấy `user_id` từ token đã xác minh, bỏ qua `X-Visitor-Id`; frontend không được chỉ định chủ sở hữu qua payload. Không commit `.env`, database, ảnh người dùng hoặc thư mục runtime.
+Với dự án mới, SQLite và ảnh lưu trong `backend/.runtime` nếu chưa đặt `APP_DATA_DIR`. Dự án cũ giữ database tại gốc/backend và thư mục ảnh cũ khi chỉ có một lựa chọn. Đường dẫn không phụ thuộc thư mục chạy lệnh. Nếu có hai DB cũ, phải chọn đường dẫn tuyệt đối trong `DATABASE_URL`. Mọi API dữ liệu cá nhân yêu cầu Bearer token hợp lệ, phiên chưa bị thu hồi và tài khoản còn tồn tại. Backend lấy `user_id` từ token đã xác minh, bỏ qua `X-Visitor-Id`; frontend không được chỉ định chủ sở hữu qua payload. Không commit `.env`, database, ảnh người dùng hoặc thư mục runtime.
 
 ## Database mới và nâng cấp database cũ
 
@@ -48,9 +50,18 @@ SQLite cần phiên bản 3.25+ để đổi tên cột. Quy trình demo đượ
 
 ## Tài khoản và phiên đăng nhập
 
-Đăng ký bằng tên đăng nhập, mật khẩu và xác nhận mật khẩu. Mật khẩu được băm PBKDF2 với salt; token được ký ở backend. Đăng xuất sẽ xóa token và hủy state giao diện của tài khoản cũ. Token sai, hết hạn hoặc thuộc tài khoản không tồn tại bị từ chối với mã 401. Token hiện có hạn 7 ngày; đăng xuất ở trình duyệt chưa thu hồi token trên các thiết bị khác.
+Đăng ký bằng tên đăng nhập, mật khẩu và xác nhận mật khẩu. Mật khẩu được băm PBKDF2 với salt; token được ký ở backend. Database chỉ lưu SHA-256 của token, không lưu token gốc. Đăng xuất thu hồi đúng phiên ở server, xóa token trên trình duyệt và hủy state của tài khoản cũ. Phiên trên thiết bị khác vẫn độc lập. Token sai, hết hạn, đã thu hồi hoặc thuộc tài khoản không tồn tại trả 401. Token có hạn 7 ngày. Sau khi nâng cấp lên bảng `auth_sessions`, người dùng cần đăng nhập lại một lần; tài khoản và dữ liệu cũ vẫn còn.
 
 Khi chạy local, nếu `AUTH_SECRET` để trống, ứng dụng tự sinh khóa ngẫu nhiên và lưu trong `backend/.runtime/auth-secret` (đã được Git bỏ qua). Không dùng khóa ký cố định công khai. Khi triển khai, cấu hình `AUTH_SECRET` riêng ít nhất 32 ký tự; các tiến trình backend phải dùng cùng khóa. Không đưa khóa thật, DB hoặc ảnh người dùng lên Git.
+
+## Mục tiêu cá nhân và Ăn uống
+
+1. Vào **Cá nhân**, nhập tuổi, chiều cao, cân nặng hiện tại/mong muốn, ngày hoàn thành, thông số sinh học và mức vận động. Chọn tăng/giảm/duy trì khớp hai mức cân nặng.
+2. **Tính thử** hiển thị kcal, protein, carb, chất béo và số ngày còn lại, không lưu vào hồ sơ. Đổi dữ liệu nhập sẽ ẩn kết quả cũ để tránh đọc nhầm.
+3. **Lưu mục tiêu** áp dụng bốn chỉ số vào theo dõi hằng ngày. **Lưu và xem ăn uống** lưu rồi chuyển thẳng tới thực đơn; có thể quay lại bằng **Sửa mục tiêu**.
+4. Protein theo cân nặng hiện tại và mức 1,2/1,6 g/kg đã chọn, không tính theo số kg muốn tăng. Kcal được điều chỉnh theo thời hạn và giới hạn trong công thức; xem cảnh báo thời hạn. Đây là số liệu ước tính để theo dõi, không bảo đảm kết quả cân nặng.
+5. **Lưu và nhận gợi ý AI** lưu hồ sơ trước rồi tạo hai phương án đủ sáng/trưa/tối từ CSV, loại thành phần cần tránh. Khẩu phần được điều chỉnh để gần kcal mục tiêu; tổng dinh dưỡng thực đơn được hiển thị để người dùng kiểm tra. Lỗi AI không xóa mục tiêu đã lưu.
+6. Chọn cách ăn để chuyển sang checklist theo bữa, nhập lượng ăn rồi tick khi đã ăn. Món mới được cộng sau tick/xác nhận. Chọn giáo án để chuyển sang Tập luyện. Đổi thông tin mục tiêu làm hết hiệu lực gợi ý cũ.
 
 ## Tập luyện
 
@@ -109,10 +120,14 @@ backend/
   app/ai.py            gọi Gemini và xử lý lỗi
   app/scan_service.py  kiểm tra ảnh, chuẩn hóa món và lưu ảnh lịch sử
   app/goals.py         tính mục tiêu và đánh giá lịch sử dinh dưỡng
+  app/profile_service.py kiểm tra hồ sơ và tuần tự hóa mục tiêu
+  app/profile_routes.py tính thử, tạo gợi ý và chọn phương án
+  app/settings.py      cấu hình đường dẫn dữ liệu bền
   tests/              ăn uống, lỗi AI, hai tài khoản, migration và tập luyện
 frontend/
   src/App.jsx          phiên đăng nhập, bố cục và điều hướng
   src/AuthPage.jsx     biểu mẫu tài khoản
+  src/ProfilePanel.jsx hồ sơ, bốn chỉ số và lựa chọn gợi ý
   src/WorkoutPlans.jsx chọn và xem giáo án
   src/WorkoutPanel.jsx bài tập và lịch xanh/đỏ
   src/api.js           hàm gọi API
