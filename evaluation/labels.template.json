@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {
+      "id": "real-001",
+      "image": "images/real-001.jpg",
+      "split": "dev",
+      "synthetic": false,
+      "group_id": "meal-photo-session-001",
+      "category": "single_dish",
+      "source": "Điền nguồn ảnh và quyền sử dụng",
+      "reviewed_by": [],
+      "expected": [["Điền tên món đúng sau khi hai người kiểm tra"]]
+    },
+    {
+      "id": "real-002",
+      "image": "images/real-002.jpg",
+      "split": "test",
+      "synthetic": false,
+      "group_id": "meal-photo-session-002",
+      "category": "nonfood",
+      "source": "Điền nguồn ảnh và quyền sử dụng",
+      "reviewed_by": [],
+      "expected": []
+    }
+  ]
+}
